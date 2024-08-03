@@ -27,6 +27,7 @@ import (
 	"zotregistry.dev/zot/pkg/meta/dynamodb"
 	mTypes "zotregistry.dev/zot/pkg/meta/types"
 	"zotregistry.dev/zot/pkg/storage"
+	"zotregistry.dev/zot/pkg/storage/azure"
 	storageConstants "zotregistry.dev/zot/pkg/storage/constants"
 	"zotregistry.dev/zot/pkg/storage/gc"
 	"zotregistry.dev/zot/pkg/storage/local"
@@ -38,6 +39,7 @@ import (
 
 const (
 	region        = "us-east-2"
+	azureTestName = "AzureAPIs"
 	s3TestName    = "S3APIs"
 	localTestName = "LocalAPIs"
 )
@@ -47,6 +49,10 @@ var testCases = []struct {
 	testCaseName string
 	storageType  string
 }{
+	{
+		testCaseName: azureTestName,
+		storageType:  storageConstants.AzureBlobStorageDriverName,
+	},
 	{
 		testCaseName: s3TestName,
 		storageType:  storageConstants.S3StorageDriverName,
@@ -72,7 +78,40 @@ func TestGarbageCollectAndRetention(t *testing.T) {
 
 			var metaDB mTypes.MetaDB
 
-			if testcase.storageType == storageConstants.S3StorageDriverName {
+			switch testcase.storageType {
+			case storageConstants.AzureBlobStorageDriverName:
+				tskip.SkipAzureBlob(t)
+
+				uuid, err := guuid.NewV4()
+				if err != nil {
+					panic(err)
+				}
+
+				rootDir := path.Join("/oci-repo-test", uuid.String())
+				cacheDir := t.TempDir()
+
+				container := "zot-storage-test"
+
+				storageDriverParams := map[string]interface{}{
+					"rootDir":     rootDir,
+					"name":        "azure",
+					"container":   container,
+					"serviceurl":  os.Getenv("AZURE_BLOB_MOCK_ENDPOINT"),
+					"accountname": "zot-storage-test",
+					"secretkey":   "YXp1cml0ZQo=",
+				}
+
+				storeName := fmt.Sprintf("%v", storageDriverParams["name"])
+
+				store, err := factory.Create(context.Background(), storeName, storageDriverParams)
+				if err != nil {
+					panic(err)
+				}
+
+				defer store.Delete(context.Background(), rootDir) //nolint: errcheck
+
+				imgStore = azure.NewImageStore(rootDir, cacheDir, true, false, log, metrics, nil, store, nil)
+			case storageConstants.S3StorageDriverName:
 				tskip.SkipDynamo(t)
 				tskip.SkipS3(t)
 
@@ -141,7 +180,7 @@ func TestGarbageCollectAndRetention(t *testing.T) {
 				}
 
 				imgStore = s3.NewImageStore(rootDir, cacheDir, true, false, log, metrics, nil, store, nil, nil)
-			} else {
+			default:
 				// Create temporary directory
 				rootDir := t.TempDir()
 

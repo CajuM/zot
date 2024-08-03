@@ -21,6 +21,9 @@ runs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.23.6'
     - shell: bash
       run: |
             pip install localstack==3.3.0                                # Install LocalStack cli
@@ -36,3 +39,24 @@ runs:
       env:
         AWS_ACCESS_KEY_ID: fake
         AWS_SECRET_ACCESS_KEY: fake
+
+    - shell: bash
+      run: |
+            go install filippo.io/mkcert@v1.4.4
+            mkcert -install 127.0.0.1
+
+            docker run -d -p 10000:10000 --name azurite \
+                -e "AZURITE_ACCOUNTS=zot-storage-test:YXp1cml0ZQo=" -v $PWD:/data \
+                mcr.microsoft.com/azure-storage/azurite:3.33.0 azurite-blob \
+                    --blobHost 0.0.0.0 \
+                    --cert /data/127.0.0.1.pem \
+                    --key /data/127.0.0.1-key.pem
+
+    - shell: bash
+      run: |
+            pip install azure-cli
+            sleep 10
+            CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt az storage container create --name zot-storage
+      env:
+        # https://github.com/Azure/azure-cli/blob/dev/src/azure-cli/azure/cli/command_modules/storage/docs/Use%20Storage%20Commands.md
+        AZURE_STORAGE_CONNECTION_STRING: DefaultEndpointsProtocol=http;AccountName=zot-storage-test;AccountKey=YXp1cml0ZQo=;BlobEndpoint=http://127.0.0.1:10000/zot-storage-test;
